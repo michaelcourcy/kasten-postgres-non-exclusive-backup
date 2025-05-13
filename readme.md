@@ -66,8 +66,8 @@ kubectl annotate statefulset postgres16-postgresql kanister.kasten.io/blueprint=
 3. Restore 
 4. check you get your data
 
-In order to verify that all non exckusive backup operations were done as expected you can check the logs in the backup session pod 
-before it is removed 
+In order to verify that all non exclusive backup operations were done as expected you can check the logs in the backup session pod 
+before it is removed.
 
 ```
  kubectl logs postgres16-postgresql-backup-session
