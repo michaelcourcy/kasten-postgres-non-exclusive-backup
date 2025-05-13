@@ -13,7 +13,7 @@ Daniil Fedotov.
 3. In the statefulset backupPosthook stop the backup session with `SELECT * FROM pg_backup_stop(wait_for_archive => true);`
 
 
-# Create a 16.0 posgres database 
+# Create a 16.0 postgres database 
 ## Deploy the bitnami helm chart 
 
 ```
