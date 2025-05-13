@@ -49,7 +49,7 @@ exit
 
 # Deploy the blueprint and test it 
 
-## deploy the blueprint
+## Deploy the blueprint
 
 Create it and bind it to the statefulset
 
