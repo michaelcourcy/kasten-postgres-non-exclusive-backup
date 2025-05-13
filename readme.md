@@ -62,9 +62,9 @@ kubectl annotate statefulset postgres16-postgresql kanister.kasten.io/blueprint=
 ## Test 
 
 1. Create a backup of the namespace 
-2. delete the statfulset and the restore 
+2. delete the statefulset and the pvc 
 3. Restore 
-4. check you get your data
+4. check you get your data back
 
 In order to verify that all non exclusive backup operations were done as expected you can check the logs in the backup session pod 
 before it is removed.
