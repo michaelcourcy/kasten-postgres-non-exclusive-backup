@@ -1,0 +1,112 @@
+apiVersion: cr.kanister.io/v1alpha1
+kind: Blueprint
+metadata:
+  name: postgres-non-exclusive-backup
+  namespace: kasten-io
+actions:
+  backupPrehook:
+    kind: StatefulSet
+    phases:
+    - name: createBackupSessionPod
+      func: KubeOps
+      objects:
+        pgSecret:
+          kind: Secret
+          name: '{{ index .Object.metadata.labels "app.kubernetes.io/instance" }}-postgresql'
+          namespace: '{{ .StatefulSet.Namespace }}'
+      args:
+        operation: create
+        namespace: '{{ .StatefulSet.Namespace }}'
+        spec: |-
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: {{ .StatefulSet.Name }}-backup-session
+          spec:
+            restartPolicy: Never
+            containers:
+              - name: container
+                image: bitnami/postgresql:16
+                command:
+                - bash
+                - -o
+                - errexit
+                - -o
+                - pipefail
+                - -c
+                - |
+                  export PGHOST='{{ index .Object.metadata.labels "app.kubernetes.io/instance" }}-postgresql.{{ .StatefulSet.Namespace }}.svc.cluster.local'
+                  export PGUSER='postgres'
+                  export PGPASSWORD='{{ index .Phases.createBackupSessionPod.Secrets.pgSecret.Data "postgres-password" | toString }}'
+                  ## Create file descriptor to send commands to psql
+                  mkfifo /tmp/pg_in
+                  ## Create "holder" process to keep pg_in open
+                  while sleep 1; do :; done >/tmp/pg_in &
+                  ## Save "holder" PID to a file to kill it later
+                  echo $! > /tmp/holder_pid
+                  ## Run psql session reading from pg_in and writing ot pg_out
+                  ## Using tee here to keep the pod logs (might need to replace with just `> /tmp/pg_out`)
+                  ## TODO: should we track stderr here?
+                  cat /tmp/pg_in | psql -U ${PGUSER} | tee /tmp/pg_out
+    - func: WaitV2
+      name: waitBackupSessionPodReady
+      args:
+        timeout: 5m
+        conditions:
+          anyOf:
+          - condition: '{{ $available := false }}{{ range $condition := $.status.conditions }}{{ if and (eq .type "ContainersReady") (eq .status "True") }}{{ $available = true }}{{ end }}{{ end }}{{ $available }}'
+            objectReference:
+              apiVersion: "v1"
+              name: "{{ .StatefulSet.Name }}-backup-session"
+              namespace: '{{ .StatefulSet.Namespace }}'
+              resource: "pods"
+    - name: startBackupSession
+      func: KubeExec
+      args:
+        namespace: '{{ .StatefulSet.Namespace }}'
+        pod: "{{ .StatefulSet.Name }}-backup-session"
+        command:
+        - bash
+        - -o
+        - errexit
+        - -o
+        - pipefail
+        - -c
+        - |
+          ## Send pg_backup_start command to psql session
+          echo "SELECT pg_backup_start(label => 'kanister_backup', fast => false);" > /tmp/pg_in
+          ## Make sure operation completed
+          ## TODO: maybe there's a better way to fail/log here?
+          grep -q pg_backup_start <(tail -f /tmp/pg_out)
+
+  backupPosthook:
+    kind: StatefulSet
+    phases:
+    - name: stopBackupSession
+      func: KubeExec
+      args:
+        namespace: '{{ .StatefulSet.Namespace }}'
+        pod: "{{ .StatefulSet.Name }}-backup-session"
+        command:
+        - bash
+        - -o
+        - errexit
+        - -o
+        - pipefail
+        - -c
+        - |
+          ## Send pg_backup_stop command to psql session
+          echo "SELECT * FROM pg_backup_stop(wait_for_archive => true);" > /tmp/pg_in
+          ## Make sure operation completed
+          ## TODO: maybe there's a better way to fail/log here?
+          grep -q "LABEL: kanister_backup" <(tail -f /tmp/pg_out)
+    - name: deleteBackupPodSession
+      func: KubeOps
+      args:
+        operation: delete
+        objectReference:
+          apiVersion: v1
+          resource: "pods"
+          name: "{{ .StatefulSet.Name }}-backup-session"
+          namespace: '{{ .StatefulSet.Namespace }}'
+
